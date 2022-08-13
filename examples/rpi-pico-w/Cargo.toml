@@ -26,9 +26,9 @@ heapless = "0.7.15"
 
 
 [patch.crates-io]
-embassy = { git = "https://github.com/embassy-rs/embassy", rev = "5f43c1d37e9db847c7861fe0bd821db62edba9f6" }
-embassy-rp = { git = "https://github.com/embassy-rs/embassy", rev = "5f43c1d37e9db847c7861fe0bd821db62edba9f6" }
-embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "5f43c1d37e9db847c7861fe0bd821db62edba9f6" }
+embassy = { git = "https://github.com/embassy-rs/embassy", rev = "0f4c0311feea48323ad60efa7bac3673d412cb60" }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy", rev = "0f4c0311feea48323ad60efa7bac3673d412cb60" }
+embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "0f4c0311feea48323ad60efa7bac3673d412cb60" }
 #embassy = { path = "/home/dirbaio/embassy/embassy/embassy" }
 #embassy-rp = { path = "/home/dirbaio/embassy/embassy/embassy-rp" }
 #embassy-net = { path = "/home/dirbaio/embassy/embassy/embassy-net" }

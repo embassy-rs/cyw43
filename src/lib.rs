@@ -22,7 +22,7 @@ use embassy::channel::mpmc::Channel;
 use embassy::time::{block_for, Duration, Timer};
 use embassy::util::yield_now;
 use embassy_net::{PacketBoxExt, PacketBuf};
-use embedded_hal_1::digital::blocking::OutputPin;
+use embedded_hal_1::digital::blocking::{InputPin, OutputPin};
 use embedded_hal_async::spi::{SpiBusRead, SpiBusWrite, SpiDevice};
 
 use self::structs::*;
@@ -512,31 +512,35 @@ impl<'a> embassy_net::Device for NetDevice<'a> {
     }
 }
 
-pub struct Runner<'a, PWR, SPI> {
+pub struct Runner<'a, PWR, IRQ, SPI> {
     state: &'a State,
 
     pwr: PWR,
     spi: SPI,
+    irq: IRQ,
 
     ioctl_id: u16,
     sdpcm_seq: u8,
     backplane_window: u32,
 }
 
-pub async fn new<'a, PWR, SPI>(
+pub async fn new<'a, PWR, IRQ, SPI>(
     state: &'a State,
     pwr: PWR,
+    irq: IRQ,
     spi: SPI,
     firmware: &[u8],
-) -> (Control<'a>, Runner<'a, PWR, SPI>)
+) -> (Control<'a>, Runner<'a, PWR, IRQ, SPI>)
 where
     PWR: OutputPin,
+    IRQ: InputPin,
     SPI: SpiDevice,
     SPI::Bus: SpiBusRead<u32> + SpiBusWrite<u32>,
 {
     let mut runner = Runner {
         state,
         pwr,
+        irq,
         spi,
 
         ioctl_id: 0,
@@ -549,9 +553,10 @@ where
     (Control { state }, runner)
 }
 
-impl<'a, PWR, SPI> Runner<'a, PWR, SPI>
+impl<'a, PWR, IRQ, SPI> Runner<'a, PWR, IRQ, SPI>
 where
     PWR: OutputPin,
+    IRQ: InputPin,
     SPI: SpiDevice,
     SPI::Bus: SpiBusRead<u32> + SpiBusWrite<u32>,
 {
@@ -581,6 +586,10 @@ where
         // No response delay in any of the funcs.
         // seems to break backplane??? eat the 4-byte delay instead, that's what the vendor drivers do...
         //self.write32(FUNC_BUS, REG_BUS_RESP_DELAY, 0).await;
+
+        // Clear + enable irqs.
+        self.write16(FUNC_BUS, REG_BUS_INTERRUPT, 0xFFFF).await;
+        self.write16(FUNC_BUS, REG_BUS_INTERRUPT_ENABLE, 0x0020).await;
 
         // Init ALP (no idea what that stands for) clock
         self.write8(FUNC_BACKPLANE, REG_BACKPLANE_CHIP_CLOCK_CSR, 0x08).await;
@@ -663,6 +672,7 @@ where
 
     pub async fn run(mut self) -> ! {
         let mut buf = [0; 512];
+        let mut irq = false;
         loop {
             // Send stuff
             // TODO flow control
@@ -673,6 +683,18 @@ where
 
             if let Ok(p) = self.state.tx_channel.try_recv() {
                 self.send_packet(&p).await;
+            }
+
+            let irq2 = self.irq.is_high().unwrap();
+            if irq != irq2 {
+                info!("irq change: {}", irq2);
+                irq = irq2;
+            }
+
+            // Wait for IRQ
+            if self.irq.is_low().unwrap() {
+                yield_now().await;
+                continue;
             }
 
             // Receive stuff
