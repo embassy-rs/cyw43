@@ -19,6 +19,7 @@ macro_rules! impl_bytes {
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
+// SDIO Packet Control Management (SDPCM)
 pub struct SdpcmHeader {
     pub len: u16,
     pub len_inv: u16,
