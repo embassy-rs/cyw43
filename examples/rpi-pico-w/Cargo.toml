@@ -34,6 +34,8 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "cb9f0e
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "cb9f0ef5b800ce4a22cde1805e0eb88425f1e07b" }
 embassy-rp = { git = "https://github.com/embassy-rs/embassy", rev = "cb9f0ef5b800ce4a22cde1805e0eb88425f1e07b" }
 embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "cb9f0ef5b800ce4a22cde1805e0eb88425f1e07b" }
+embedded-hal-async = { git = "https://github.com/GrantM11235/embedded-hal", rev = "03926762168e5d383067b02d76704f52e98829df"}
+embedded-hal = { git = "https://github.com/GrantM11235/embedded-hal", rev = "03926762168e5d383067b02d76704f52e98829df"}
 
 [profile.dev]
 debug = 2

@@ -23,7 +23,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{block_for, Duration, Timer};
 use embedded_hal_1::digital::blocking::OutputPin;
-use embedded_hal_async::spi::{SpiBusRead, SpiBusWrite, SpiDevice};
+use embedded_hal_async::spi::{transaction_helper, SpiBusRead, SpiBusWrite, SpiDevice};
 
 use self::structs::*;
 use crate::events::Event;
@@ -725,17 +725,13 @@ where
 
                     let cmd = cmd_word(false, true, FUNC_WLAN, 0, len);
 
-                    self.spi
-                        .transaction(|bus| {
-                            let bus = unsafe { &mut *bus };
-                            async {
-                                bus.write(&[cmd]).await?;
-                                bus.read(&mut buf[..(len as usize + 3) / 4]).await?;
-                                Ok(())
-                            }
-                        })
-                        .await
-                        .unwrap();
+                    transaction_helper!(&mut self.spi, |bus| async {
+                        bus.write(&[cmd]).await?;
+                        bus.read(&mut buf[..(len as usize + 3) / 4]).await?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
 
                     trace!("rx {:02x}", &slice8_mut(&mut buf)[..(len as usize).min(48)]);
 
@@ -789,17 +785,13 @@ where
         trace!("    {:02x}", &buf8[..total_len.min(48)]);
 
         let cmd = cmd_word(true, true, FUNC_WLAN, 0, total_len as _);
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    bus.write(&buf[..(total_len / 4)]).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[cmd]).await?;
+            bus.write(&buf[..(total_len / 4)]).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     fn rx(&mut self, packet: &[u8]) {
@@ -984,17 +976,13 @@ where
 
         let cmd = cmd_word(true, true, FUNC_WLAN, 0, total_len as _);
 
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    bus.write(&buf[..total_len / 4]).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[cmd]).await?;
+            bus.write(&buf[..total_len / 4]).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     async fn core_disable(&mut self, core: Core) {
@@ -1072,23 +1060,19 @@ where
 
             let cmd = cmd_word(false, true, FUNC_BACKPLANE, window_offs, len as u32);
 
-            self.spi
-                .transaction(|bus| {
-                    let bus = unsafe { &mut *bus };
-                    async {
-                        bus.write(&[cmd]).await?;
+            transaction_helper!(&mut self.spi, |bus| async {
+                bus.write(&[cmd]).await?;
 
-                        // 4-byte response delay.
-                        let mut junk = [0; 1];
-                        bus.read(&mut junk).await?;
+                // 4-byte response delay.
+                let mut junk = [0; 1];
+                bus.read(&mut junk).await?;
 
-                        // Read data
-                        bus.read(&mut data[..len / 4]).await?;
-                        Ok(())
-                    }
-                })
-                .await
-                .unwrap();
+                // Read data
+                bus.read(&mut data[..len / 4]).await?;
+                Ok(())
+            })
+            .await
+            .unwrap();
 
             // Advance ptr.
             addr += len as u32;
@@ -1117,17 +1101,13 @@ where
 
             let cmd = cmd_word(true, true, FUNC_BACKPLANE, window_offs, len as u32);
 
-            self.spi
-                .transaction(|bus| {
-                    let bus = unsafe { &mut *bus };
-                    async {
-                        bus.write(&[cmd]).await?;
-                        bus.write(&buf[..(len + 3) / 4]).await?;
-                        Ok(())
-                    }
-                })
-                .await
-                .unwrap();
+            transaction_helper!(&mut self.spi, |bus| async {
+                bus.write(&[cmd]).await?;
+                bus.write(&buf[..(len + 3) / 4]).await?;
+                Ok(())
+            })
+            .await
+            .unwrap();
 
             // Advance ptr.
             addr += len as u32;
@@ -1237,21 +1217,17 @@ where
         let cmd = cmd_word(false, true, func, addr, len);
         let mut buf = [0; 1];
 
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd]).await?;
-                    if func == FUNC_BACKPLANE {
-                        // 4-byte response delay.
-                        bus.read(&mut buf).await?;
-                    }
-                    bus.read(&mut buf).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[cmd]).await?;
+            if func == FUNC_BACKPLANE {
+                // 4-byte response delay.
+                bus.read(&mut buf).await?;
+            }
+            bus.read(&mut buf).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
 
         buf[0]
     }
@@ -1259,33 +1235,25 @@ where
     async fn writen(&mut self, func: u32, addr: u32, val: u32, len: u32) {
         let cmd = cmd_word(true, true, func, addr, len);
 
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[cmd, val]).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[cmd, val]).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
     async fn read32_swapped(&mut self, addr: u32) -> u32 {
         let cmd = cmd_word(false, true, FUNC_BUS, addr, 4);
         let mut buf = [0; 1];
 
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[swap16(cmd)]).await?;
-                    bus.read(&mut buf).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[swap16(cmd)]).await?;
+            bus.read(&mut buf).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
 
         swap16(buf[0])
     }
@@ -1293,16 +1261,12 @@ where
     async fn write32_swapped(&mut self, addr: u32, val: u32) {
         let cmd = cmd_word(true, true, FUNC_BUS, addr, 4);
 
-        self.spi
-            .transaction(|bus| {
-                let bus = unsafe { &mut *bus };
-                async {
-                    bus.write(&[swap16(cmd), swap16(val)]).await?;
-                    Ok(())
-                }
-            })
-            .await
-            .unwrap();
+        transaction_helper!(&mut self.spi, |bus| async {
+            bus.write(&[swap16(cmd), swap16(val)]).await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 }
 
