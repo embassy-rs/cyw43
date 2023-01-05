@@ -3,6 +3,14 @@ name = "cyw43-example-rpi-pico-w"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "echo-server"
+path = "./src/main.rs"
+
+[[bin]]
+name = "echo-server"
+path = "./src/main.rs"
+
 [dependencies]
 cyw43 = { path = "../../", features = ["defmt", "firmware-logs"]}
 embassy-executor = { version = "0.1.0",  features = ["defmt", "integrated-timers"] }
