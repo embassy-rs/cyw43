@@ -8,8 +8,8 @@ name = "echo-server"
 path = "./src/main.rs"
 
 [[bin]]
-name = "echo-server"
-path = "./src/main.rs"
+name = "adc-tcp-stream"
+path = "./src/adc-tcp-stream.rs"
 
 [dependencies]
 cyw43 = { path = "../../", features = ["defmt", "firmware-logs"]}

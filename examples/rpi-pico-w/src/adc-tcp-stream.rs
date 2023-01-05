@@ -12,16 +12,16 @@ use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Stack, StackResources};
 use embassy_rp::adc::{Adc, Config};
-use embassy_rp::interrupt;
 use embassy_rp::gpio::{Flex, Level, Output};
+use embassy_rp::interrupt;
 use embassy_rp::peripherals::{PIN_23, PIN_24, PIN_25, PIN_29};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::{Channel, Receiver};
 use embedded_hal_1::spi::ErrorType;
 use embedded_hal_async::spi::{ExclusiveDevice, SpiBusFlush, SpiBusRead, SpiBusWrite};
 use embedded_io::asynch::Write;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::channel::{Channel, Receiver};
 
 pub mod write_to {
     use core::cmp::min;
@@ -107,9 +107,8 @@ static mut TX_BUFFER: [u8; 4096] = [0; 4096];
 // TCP writer task
 #[embassy_executor::task]
 async fn send_buf() -> ! {
-
     loop {
-        if unsafe {RECEIVER.is_none()} {
+        if unsafe { RECEIVER.is_none() } {
             // Should not get here
             error!("Spurious start of send_buf task");
             continue;
@@ -237,9 +236,7 @@ async fn main(spawner: Spawner) {
             DONE = false;
         }
         // Make a new socket. Can only get to this point if the current socket died
-        let mut socket = unsafe {
-            TcpSocket::new(stack, &mut RX_BUFFER, &mut TX_BUFFER)
-        };
+        let mut socket = unsafe { TcpSocket::new(stack, &mut RX_BUFFER, &mut TX_BUFFER) };
         socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(100)));
 
         info!("Listening on TCP:1234...");

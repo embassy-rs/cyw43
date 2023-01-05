@@ -170,7 +170,7 @@ impl SpiBusRead<u32> for MySpi {
         for word in words {
             let mut w = 0;
             for _ in 0..32 {
-                w = w << 1;
+                w <<= 1;
 
                 // rising edge, sample data
                 if self.dio.is_high() {
@@ -205,7 +205,7 @@ impl SpiBusWrite<u32> for MySpi {
                 // rising edge
                 self.clk.set_high();
 
-                word = word << 1;
+                word <<= 1;
             }
         }
         self.clk.set_low();
