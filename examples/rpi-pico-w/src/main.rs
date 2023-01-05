@@ -3,6 +3,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(async_fn_in_trait)]
 #![allow(incomplete_features)]
+#![feature(default_alloc_error_handler)]
 
 use core::convert::Infallible;
 
@@ -10,6 +11,8 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Stack, StackResources};
+use embassy_rp::adc::{Adc, Config};
+use embassy_rp::interrupt;
 use embassy_rp::gpio::{Flex, Level, Output};
 use embassy_rp::peripherals::{PIN_23, PIN_24, PIN_25, PIN_29};
 use embedded_hal_1::spi::ErrorType;
@@ -17,6 +20,60 @@ use embedded_hal_async::spi::{ExclusiveDevice, SpiBusFlush, SpiBusRead, SpiBusWr
 use embedded_io::asynch::Write;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::channel::{Channel, Receiver};
+
+pub mod write_to {
+    use core::cmp::min;
+    use core::fmt;
+
+    pub struct WriteTo<'a> {
+        buffer: &'a mut [u8],
+        // on write error (i.e. not enough space in buffer) this grows beyond
+        // `buffer.len()`.
+        used: usize,
+    }
+
+    impl<'a> WriteTo<'a> {
+        pub fn new(buffer: &'a mut [u8]) -> Self {
+            WriteTo { buffer, used: 0 }
+        }
+
+        pub fn as_str(self) -> Option<&'a str> {
+            if self.used <= self.buffer.len() {
+                // only successful concats of str - must be a valid str.
+                use core::str::from_utf8_unchecked;
+                Some(unsafe { from_utf8_unchecked(&self.buffer[..self.used]) })
+            } else {
+                None
+            }
+        }
+    }
+
+    impl<'a> fmt::Write for WriteTo<'a> {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            if self.used > self.buffer.len() {
+                return Err(fmt::Error);
+            }
+            let remaining_buf = &mut self.buffer[self.used..];
+            let raw_s = s.as_bytes();
+            let write_num = min(raw_s.len(), remaining_buf.len());
+            remaining_buf[..write_num].copy_from_slice(&raw_s[..write_num]);
+            self.used += raw_s.len();
+            if write_num < raw_s.len() {
+                Err(fmt::Error)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    pub fn show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
+        let mut w = WriteTo::new(buffer);
+        fmt::write(&mut w, args)?;
+        w.as_str().ok_or(fmt::Error)
+    }
+}
 
 macro_rules! singleton {
     ($val:expr) => {{
@@ -36,6 +93,53 @@ async fn wifi_task(
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<cyw43::NetDriver<'static>>) -> ! {
     stack.run().await
+}
+
+static mut SOCKET: Option<TcpSocket> = None;
+static mut DONE: bool = false;
+
+static mut CHANNEL: Option<Channel<NoopRawMutex, [u8; 32], 1>> = None;
+static mut RECEIVER: Option<Receiver<NoopRawMutex, [u8; 32], 1>> = None;
+
+static mut RX_BUFFER: [u8; 4096] = [0; 4096];
+static mut TX_BUFFER: [u8; 4096] = [0; 4096];
+
+// TCP writer task
+#[embassy_executor::task]
+async fn send_buf() -> ! {
+
+    loop {
+        if unsafe {RECEIVER.is_none()} {
+            // Should not get here
+            error!("Spurious start of send_buf task");
+            continue;
+        }
+
+        let rec = unsafe { &mut *RECEIVER.as_mut().unwrap() };
+        // Wait here for bytes on the channel
+        let buf = rec.recv().await;
+        if unsafe { SOCKET.is_none() } {
+            // Should not get here
+            error!("Socket is not yet set for send_buf task");
+            continue;
+        }
+        let socket = unsafe { &mut *SOCKET.as_mut().unwrap() };
+
+        // Write the 32 bytes on the socket
+        match socket.write_all(&buf).await {
+            Ok(()) => {}
+            Err(e) => {
+                warn!("write error: {:?}", e);
+                unsafe {
+                    // Clear the socket static variable
+                    SOCKET = None;
+                    // Flag for downstream to know that the TCP connection failed
+                    DONE = true;
+                }
+                continue;
+            }
+        };
+    }
 }
 
 #[embassy_executor::main]
@@ -61,6 +165,10 @@ async fn main(spawner: Spawner) {
     let mut dio = Flex::new(p.PIN_24);
     dio.set_low();
     dio.set_as_output();
+
+    let irq = interrupt::take!(ADC_IRQ_FIFO);
+    let mut adc = Adc::new(p.ADC, irq, Config::default());
+    let mut p26 = p.PIN_26;
 
     let bus = MySpi { clk, dio };
     let spi = ExclusiveDevice::new(bus, cs);
@@ -97,16 +205,42 @@ async fn main(spawner: Spawner) {
     ));
 
     unwrap!(spawner.spawn(net_task(stack)));
-
     // And now we can use it!
 
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-    let mut buf = [0; 4096];
+    // Create a new MPMC channel. Sends/receives 32x byte arrays, but only stores 1 of them at a time.
+    let channel: Channel<NoopRawMutex, [u8; 32], 1> = Channel::new();
+
+    // Flush the MPMC channel into static land.
+    // The channel will live on as long as the program is running. Nothing is using the channel
+    // yet so this is fine.
+    unsafe {
+        CHANNEL = Some(channel);
+    }
+    let sender = unsafe {
+        // Split the now static channel and make the receiver static for use by the
+        // Embassy task
+        let channel = &mut *CHANNEL.as_mut().unwrap();
+        let receiver = channel.receiver();
+        let sender = channel.sender();
+
+        // Put the channel receiver into the static value.
+        RECEIVER = Some(receiver);
+        sender
+    };
+
+    // Spawn off the the TCP writer task
+    unwrap!(spawner.spawn(send_buf()));
 
     loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
+        // Mark that we're not done with this connection
+        unsafe {
+            DONE = false;
+        }
+        // Make a new socket. Can only get to this point if the current socket died
+        let mut socket = unsafe {
+            TcpSocket::new(stack, &mut RX_BUFFER, &mut TX_BUFFER)
+        };
+        socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(100)));
 
         info!("Listening on TCP:1234...");
         if let Err(e) = socket.accept(1234).await {
@@ -116,28 +250,36 @@ async fn main(spawner: Spawner) {
 
         info!("Received connection from {:?}", socket.remote_endpoint());
 
+        // Put the socket into the static variable for use by the TCP writer task
+        unsafe {
+            SOCKET = Some(socket);
+        }
+
         loop {
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    warn!("read EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    warn!("read error: {:?}", e);
-                    break;
-                }
-            };
+            // 32 bytes of buffer to be sent off to the TCP writer
+            let mut buf = [0u8; 32];
 
-            info!("rxd {:02x}", &buf[..n]);
+            // RP2040 ADC is 12 bit, thus packed into a 16bit value.
+            // Our buffer is 32 bytes => 16 ADC values
+            for i in 0..16 {
+                let val = adc.read(&mut p26).await;
+                // Split off the MSB / LSB and put it into the buffer
+                buf[i * 2] = (val & 0xFF) as u8;
+                buf[i * 2 + 1] = ((val >> 8) & 0xFF) as u8;
 
-            match socket.write_all(&buf[..n]).await {
-                Ok(()) => {}
-                Err(e) => {
-                    warn!("write error: {:?}", e);
+                // Break the loop if we're done with this connection.
+                if unsafe { DONE } {
                     break;
                 }
-            };
+            }
+
+            // Break the loop if we're done with this connection
+            if unsafe { DONE } {
+                break;
+            }
+
+            // Send the 32 bytes to the TCP writer
+            sender.send(buf).await;
         }
     }
 }
@@ -170,7 +312,7 @@ impl SpiBusRead<u32> for MySpi {
         for word in words {
             let mut w = 0;
             for _ in 0..32 {
-                w = w << 1;
+                w <<= 1;
 
                 // rising edge, sample data
                 if self.dio.is_high() {
@@ -205,7 +347,7 @@ impl SpiBusWrite<u32> for MySpi {
                 // rising edge
                 self.clk.set_high();
 
-                word = word << 1;
+                word <<= 1;
             }
         }
         self.clk.set_low();
