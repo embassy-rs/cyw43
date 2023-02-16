@@ -11,6 +11,7 @@ use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::gpio::{Flex, Level, Output};
+use embassy_net::dns::DnsQueryType;
 use embassy_rp::peripherals::{PIN_23, PIN_24, PIN_25, PIN_29};
 use embedded_hal_1::spi::ErrorType;
 use embedded_hal_async::spi::{ExclusiveDevice, SpiBusFlush, SpiBusRead, SpiBusWrite};
@@ -99,47 +100,20 @@ async fn main(spawner: Spawner) {
     unwrap!(spawner.spawn(net_task(stack)));
 
     // And now we can use it!
+    use embassy_time::{Timer, Duration};
+    Timer::after(Duration::from_secs(20)).await;
 
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-    let mut buf = [0; 4096];
-
-    loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
-
-        info!("Listening on TCP:1234...");
-        if let Err(e) = socket.accept(1234).await {
-            warn!("accept error: {:?}", e);
-            continue;
+    let host = "example.com";
+    info!("querying host {:?}...", host);
+    let stack: &'static Stack<cyw43::NetDriver<'static>> = stack;
+    match stack.dns_query(host, DnsQueryType::A).await {
+        Ok(r) => {
+            info!("query response: {:?}", r);
         }
-
-        info!("Received connection from {:?}", socket.remote_endpoint());
-
-        loop {
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    warn!("read EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    warn!("read error: {:?}", e);
-                    break;
-                }
-            };
-
-            info!("rxd {:02x}", &buf[..n]);
-
-            match socket.write_all(&buf[..n]).await {
-                Ok(()) => {}
-                Err(e) => {
-                    warn!("write error: {:?}", e);
-                    break;
-                }
-            };
+        Err(e) => {
+            warn!("query error: {:?}", e);
         }
-    }
+    };
 }
 
 struct MySpi {
