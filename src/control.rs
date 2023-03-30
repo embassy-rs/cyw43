@@ -242,9 +242,13 @@ impl<'a> Control<'a> {
     }
 
     async fn set_iovar(&mut self, name: &str, val: &[u8]) {
+        self.set_iovar_v::<64>(name, val).await
+    }
+
+    async fn set_iovar_v<const BUFSIZE: usize>(&mut self, name: &str, val: &[u8]) {
         info!("set {} = {:02x}", name, Bytes(val));
 
-        let mut buf = [0; 64];
+        let mut buf = [0; BUFSIZE];
         buf[..name.len()].copy_from_slice(name.as_bytes());
         buf[name.len()] = 0;
         buf[name.len() + 1..][..val.len()].copy_from_slice(val);
@@ -300,5 +304,36 @@ impl<'a> Control<'a> {
         ioctl.defuse();
 
         resp_len
+    }
+
+    pub async fn scan(&mut self) {
+        const SCANTYPE_PASSIVE: u8 = 1;
+
+        let scan_params = ScanParams {
+            version: 1,
+            action: 1,
+            sync_id: 1,
+            ssid_len: 0,
+            ssid: [0; 32],
+            bssid: [0xff; 6],
+            bss_type: 2,
+            scan_type: SCANTYPE_PASSIVE,
+            nprobes: !0,
+            active_time: !0,
+            passive_time: !0,
+            home_time: !0,
+            channel_num: 0,
+            channel_list: [0; 1],
+        };
+
+        let mut subscriber = self.event_sub.subscriber().unwrap();
+        self.set_iovar_v::<256>("escan", &scan_params.to_bytes()).await;
+
+        loop {
+            let msg = subscriber.next_message_pure().await;
+            if msg.event_type == Event::ESCAN_RESULT && msg.status == 0 {
+                break;
+            }
+        }
     }
 }

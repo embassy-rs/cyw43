@@ -251,3 +251,54 @@ impl EventMask {
         self.events[evt / 8] &= !(1 << (evt % 8));
     }
 }
+
+/// Parameters for a wifi scan
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+pub struct ScanParams {
+    pub version: u32,
+    pub action: u16,
+    pub sync_id: u16,
+    pub ssid_len: u32,
+    pub ssid: [u8; 32],
+    pub bssid: [u8; 6],
+    pub bss_type: u8,
+    pub scan_type: u8,
+    pub nprobes: u32,
+    pub active_time: u32,
+    pub passive_time: u32,
+    pub home_time: u32,
+    pub channel_num: u32,
+    pub channel_list: [u16; 1],
+}
+impl_bytes!(ScanParams);
+
+/// Wifi Scan Results Header, followed by `bss_count` `BssInfo`
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+pub struct ScanResults {
+    pub buflen: u32,
+    pub version: u32,
+    pub sync_id: u16,
+    pub bss_count: u16,
+}
+impl_bytes!(ScanResults);
+
+/// Wifi Scan Result
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
+#[non_exhaustive]
+pub struct BssInfo {
+    pub version: u32,
+    pub length: u32,
+    pub bssid: [u8; 6],
+    pub beacon_period: u16,
+    pub capability: u16,
+    pub ssid_len: u8,
+    pub ssid: [u8; 32],
+    // there will be more stuff here
+}
+impl_bytes!(BssInfo);

@@ -433,7 +433,7 @@ where
                 }
 
                 let evt_type = events::Event::from(event_packet.msg.event_type as u8);
-                let evt_data = &bcd_packet[EventMessage::SIZE..][..event_packet.msg.datalen as usize];
+                let evt_data = &bcd_packet[EventPacket::SIZE..][..event_packet.msg.datalen as usize];
                 debug!(
                     "=== EVENT {:?}: {:?} {:02x}",
                     evt_type,
@@ -446,6 +446,23 @@ where
                         status: event_packet.msg.status,
                         event_type: evt_type,
                     });
+                }
+                if evt_type == events::Event::ESCAN_RESULT {
+                    let scan_result = ScanResults::from_bytes(evt_data[..ScanResults::SIZE].try_into().unwrap());
+                    if scan_result.bss_count > 0 {
+                        let bss_info =
+                            BssInfo::from_bytes(evt_data[ScanResults::SIZE..][..BssInfo::SIZE].try_into().unwrap());
+                        let mac = &bss_info.bssid;
+                        if let Ok(ssid) = core::str::from_utf8(&bss_info.ssid[..bss_info.ssid_len as usize]) {
+                            info!("=== Wifi Scan {:x} == {}", Bytes(mac), ssid);
+                        };
+                    } else {
+                        info!("Wifi Scan done");
+                        self.events.publish_immediate(EventStatus {
+                            event_type: evt_type,
+                            status: event_packet.msg.status,
+                        });
+                    }
                 }
             }
             CHANNEL_TYPE_DATA => {
