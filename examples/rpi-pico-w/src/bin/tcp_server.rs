@@ -6,36 +6,17 @@
 
 use core::str::from_utf8;
 
+use cyw43_example_rpi_pico_w::{include_firmware, singleton, wifi_task};
 use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, Stack, StackResources};
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIN_23, PIN_25};
-use embassy_rp::pio::{Pio0, PioPeripheral, PioStateMachineInstance, Sm0};
+use embassy_rp::pio::PioPeripheral;
 use embedded_io::asynch::Write;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
-
-macro_rules! singleton {
-    ($val:expr) => {{
-        type T = impl Sized;
-        static STATIC_CELL: StaticCell<T> = StaticCell::new();
-        STATIC_CELL.init_with(move || $val)
-    }};
-}
-
-#[embassy_executor::task]
-async fn wifi_task(
-    runner: cyw43::Runner<
-        'static,
-        Output<'static, PIN_23>,
-        PioSpi<PIN_25, PioStateMachineInstance<Pio0, Sm0>, DMA_CH0>,
-    >,
-) -> ! {
-    runner.run().await
-}
 
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<cyw43::NetDriver<'static>>) -> ! {
@@ -47,17 +28,7 @@ async fn main(spawner: Spawner) {
     info!("Hello World!");
 
     let p = embassy_rp::init(Default::default());
-
-    // Include the WiFi firmware and Country Locale Matrix (CLM) blobs.
-    let fw = include_bytes!("../../../firmware/43439A0.bin");
-    let clm = include_bytes!("../../../firmware/43439A0_clm.bin");
-
-    // To make flashing faster for development, you may want to flash the firmwares independently
-    // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
-    //     probe-rs-cli download 43439A0.bin --format bin --chip RP2040 --base-address 0x10100000
-    //     probe-rs-cli download 43439A0_clm.bin --format bin --chip RP2040 --base-address 0x10140000
-    //let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 224190) };
-    //let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    let (fw, clm) = include_firmware();
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
