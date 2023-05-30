@@ -1,3 +1,5 @@
+# ARCHIVED - moved into the main Embassy repo https://github.com/embassy-rs/embassy
+
 # cyw43
 
 WIP driver for the CYW43439 wifi chip, used in the Raspberry Pi Pico W. Implementation based on [Infineon/wifi-host-driver](https://github.com/Infineon/wifi-host-driver).
